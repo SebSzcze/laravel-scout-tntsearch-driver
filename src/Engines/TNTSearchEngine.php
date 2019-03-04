@@ -110,6 +110,7 @@ class TNTSearchEngine extends Engine
     {
         $results = $this->performSearch($builder);
 
+
         if ($builder->limit) {
             $results['hits'] = $builder->limit;
         }
@@ -177,7 +178,7 @@ class TNTSearchEngine extends Engine
      */
     public function map(Builder $builder, $results, $model)
     {
-        if (is_null($results['ids']) || count($results['ids']) === 0) {
+        if (count($results['ids']) === 0) {
             return Collection::make();
         }
 
@@ -279,29 +280,35 @@ class TNTSearchEngine extends Engine
      */
     private function discardIdsFromResultSetByConstraints($builder, $searchResults)
     {
-        $qualifiedKeyName    = $builder->model->getQualifiedKeyName(); // tableName.id
+        $qualifiedKeyName = $builder->model->getQualifiedKeyName(); // tableName.id
         $subQualifiedKeyName = 'sub.'.$builder->model->getKeyName(); // sub.id
 
-        $sub = $this->getBuilder($builder->model)->whereIn(
+        $database = config('database.connections'); //databaseInfo
+        $useDatabase = config('database.default'); //default
+        $prefix = isset($database[$useDatabase]['prefix']) ? $database[$useDatabase]['prefix'] : ''; //prefix
+
+        $sub = $builder->model->newQuery()->withoutGlobalScopes()->whereIn(
             $qualifiedKeyName, $searchResults
         ); // sub query for left join
 
         $discardIds = $builder->model->newQuery()
-            ->select($qualifiedKeyName)
-            ->leftJoin(DB::raw('('.$sub->getQuery()->toSql().') as sub'), $subQualifiedKeyName, '=', $qualifiedKeyName)
-            ->addBinding($sub->getQuery()->getBindings(), 'join')
-            ->whereIn($qualifiedKeyName, $searchResults)
-            ->whereNull($subQualifiedKeyName)
-            ->pluck($builder->model->getKeyName());
+                                    ->withoutGlobalScopes()
+                                     ->select($qualifiedKeyName)
+                                     ->leftJoin(DB::raw('('.$sub->getQuery()->toSql().') as '.$prefix.'sub'), $subQualifiedKeyName, '=', $qualifiedKeyName)
+                                     ->addBinding($sub->getQuery()->getBindings(), 'join')
+                                     ->whereIn($qualifiedKeyName, $searchResults)
+// ->whereNull($subQualifiedKeyName) //we i use this get null
+                                     ->pluck($builder->model->getKeyName());
 
-        // returns values of $results['ids'] that are not part of $discardIds
+
+// returns values of $results['ids'] that are not part of $discardIds
         return collect($searchResults)->diff($discardIds);
     }
 
     /**
      * Determine if the given model uses soft deletes.
      *
-     * @param  \Illuminate\Database\Eloquent\Model  $model
+     * @param  \Illuminate\Database\Eloquent\Model $model
      * @return bool
      */
     protected function usesSoftDelete($model)
@@ -313,8 +320,8 @@ class TNTSearchEngine extends Engine
      * Determine if soft delete is active and depending on state return the
      * appropriate builder.
      *
-     * @param  Builder  $builder
-     * @param  \Illuminate\Database\Eloquent\Model  $model
+     * @param  Builder                             $builder
+     * @param  \Illuminate\Database\Eloquent\Model $model
      * @return Builder
      */
     private function handleSoftDeletes($builder, $model)
@@ -324,6 +331,7 @@ class TNTSearchEngine extends Engine
         // config('scout.soft_delete') is false
         if (!$this->usesSoftDelete($model) || !config('scout.soft_delete', true)) {
             unset($this->builder->wheres['__soft_deleted']);
+
             return $builder;
         }
 
@@ -347,6 +355,7 @@ class TNTSearchEngine extends Engine
          * Returns all undeleted entries, default behaviour
          */
         unset($this->builder->wheres['__soft_deleted']);
+
         return $builder;
     }
 
@@ -365,6 +374,7 @@ class TNTSearchEngine extends Engine
         })->reduce(function ($builder, $where) {
             // separate key, value again
             list($key, $value) = $where;
+
             return $builder->where($key, $value);
         }, $builder);
     }
@@ -384,6 +394,7 @@ class TNTSearchEngine extends Engine
         })->reduce(function ($builder, $orderBy) {
             // separate key, value again
             list($column, $direction) = $orderBy;
+
             return $builder->orderBy($column, $direction);
         }, $builder);
     }
@@ -391,12 +402,12 @@ class TNTSearchEngine extends Engine
     /**
      * Flush all of the model's records from the engine.
      *
-     * @param  \Illuminate\Database\Eloquent\Model  $model
+     * @param  \Illuminate\Database\Eloquent\Model $model
      * @return void
      */
     public function flush($model)
     {
-        $indexName   = $model->searchableAs();
+        $indexName = $model->searchableAs();
         $pathToIndex = $this->tnt->config['storage']."/{$indexName}.index";
         if (file_exists($pathToIndex)) {
             unlink($pathToIndex);
